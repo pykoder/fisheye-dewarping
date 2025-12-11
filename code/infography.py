@@ -42,7 +42,7 @@ def create_composite(fisheye_path, dewarped_paths, output_path):
     canvas_size = int(fisheye_width + 2 * dewarped_distance + 200)
     
     # Create canvas
-    canvas = Image.new('RGB', (canvas_size, canvas_size), color='white')
+    canvas = Image.new('RGBA', (canvas_size, canvas_size), color=(0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     
     # Center coordinates
@@ -57,8 +57,8 @@ def create_composite(fisheye_path, dewarped_paths, output_path):
     # Fisheye radius (assuming square image)
     fisheye_radius = fisheye_width // 2
     
-    offset_x = [0, 0, 40, -40, 0]
-    offset_y = [80, 0, 80, 80, 0]
+    offset_x = [0, 0, 0, 0, 0]
+    offset_y = [0, 0, 0, 0, 0]
     
     # Try to load a font, fall back to default if not available
     try:
