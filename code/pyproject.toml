@@ -1,0 +1,67 @@
+[project]
+name = "Ceiling_Fisheye_Unwarper"
+version = '1.0.0'
+description = "Sample Ceiling Fisheye Unwarpers"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Christophe Grosjean", email = "pykoder@gmail.com" },
+]
+keywords = ["example", "image"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "numpy",
+    "opencv-python>=4.11.0.86",
+    "pillow",
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.0",
+]
+
+[project.scripts]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501"] # Ignore line too long, as black handles it
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",                    # Verbose output
+    "--tb=short",           # Short tracebacks
+    "--strict-markers",     # Strict marker handling
+    "--disable-warnings",   # Hide warnings
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+]

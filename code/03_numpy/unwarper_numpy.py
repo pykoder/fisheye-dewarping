@@ -64,6 +64,36 @@ class PythonDewarper:
         self.output_buffer = np.zeros((self.zones, self.output_height, self.output_width, 3), dtype=np.uint8)
 
     
+    def get_rotation_matrix(self, yaw: float, pitch: float, roll: float) -> np.ndarray:
+        """
+        Generate rotation matrix from yaw, pitch, roll angles (in degrees).
+        
+        Args:
+            yaw: Rotation around Y axis in degrees
+            pitch: Rotation around X axis in degrees
+            roll: Rotation around Z axis in degrees
+        Returns:
+            3x3 rotation matrix as numpy array
+        """
+        # Yaw quaternion, rotate view around Y axis
+        yaw = np.deg2rad(0)
+        yaw_q = np.array([np.cos(yaw/2.0), 0.0, np.sin(yaw/2.0), 0.0], dtype=np.float64)
+        # Pitch quaternion, rotate view around X axis (look up 45 degrees)
+        pitch = np.deg2rad(45)             
+        pitch_q = np.array([np.cos(pitch/2.0), np.sin(pitch/2.0), 0.0, 0.0], dtype=np.float64)
+        # Roll quaternion, rotate view around Z axis (look in different direction)
+        roll = np.deg2rad(roll)
+        roll_q = np.array([np.cos(roll/2.0), 0.0, 0.0, np.sin(roll/2.0)], dtype=np.float64)
+
+        rq = multiply_quaternion(roll_q, multiply_quaternion(pitch_q, yaw_q))
+
+        # Build spherical projection matrix from quaternions
+        w, x, y, z = rq
+        return np.array([
+            [ (w*w + x*x - y*y - z*z),  2.0 * (x*y - z*w), 2.0 * (w*y + x*z)],
+            [ 2.0 * (w*z + x*y), (w*w - x*x + y*y - z*z), 2.0 * (y*z - w*x)],
+            [ 2.0 * (x*z - y*w), 2.0 * (w*x + y*z), (w*w - x*x - y*y + z*z)]], dtype=np.float64)
+
     def _dewarp_mapping(self):
         """
         Create pixel remapping tables for all zones.
@@ -73,46 +103,18 @@ class PythonDewarper:
         where the last dimension contains (src_x, src_y) for each pixel.
         """
         
-        # Yaw quaternion, rotate view around Y axis
-        yaw = 0 * np.pi / 360.0
-        sin_yaw, cos_yaw = np.sin(yaw), np.cos(yaw)
-        yaw_q = np.array([cos_yaw, 0.0, sin_yaw, 0.0], dtype=np.float64)
-        # Pitch quaternion, rotate view around X axis (look up 45 degrees)
-        pitch = 45 * np.pi / 360.0             
-        sin_pitch, cos_pitch = np.sin(pitch), np.cos(pitch)
-        pitch_q = np.array([cos_pitch, sin_pitch, 0.0, 0.0], dtype=np.float64)
-
         # Create remapping tables for each view and stack them into a single array
         # Shape: (zones, output_height, output_width, 2)
         # Last dimension contains (src_x, src_y) for each pixel
         remap_list = []
+        # These parameters control the focal length and centering of the projection
+        expand = 1.269 # Experimental expansion factor to cover full frame (match ffmpeg output)
+        offset = 0.25 # Experimental offset to center the projection (matching ffmpeg)
+        v = np.array([expand * 4.0 / self.width, expand * 4.0 / self.height, 4.0 / np.pi], dtype=np.float64)  # Up vector
         for zone_id in range(self.zones):
-            # Roll quaternion, rotate view around Z axis (look in different direction)
-            roll = (360.0 * zone_id / self.zones) * np.pi / 360.0
-            sin_roll, cos_roll = np.sin(roll), np.cos(roll)
-            roll_q = np.array([cos_roll, 0.0, 0.0, sin_roll], dtype=np.float64)
-    
-            rq = multiply_quaternion(multiply_quaternion(roll_q, pitch_q), yaw_q)
-            
-            expand = 1.269 # Experimental expansion factor to cover full frame (match ffmpeg output)
-            offset = 0.25 # Experimental offset to center the projection (matching ffmpeg)
-            # Build spherical projection matrix from quaternions
-            m = np.array([[
-                    expand * 4.0 * (rq[0]**2 + rq[1]**2 - rq[2]**2 - rq[3]**2) / self.width,
-                    expand * 4.0 * (-rq[0] * rq[3] + rq[1] * rq[2] + rq[2] * rq[1] - rq[3] * rq[0]) / self.height,
-                    4.0 * (rq[0] * rq[2] + rq[1] * rq[3] + rq[2] * rq[0] + rq[3] * rq[1]) / np.pi
-                ],
-                [
-                    expand * 4.0 * (rq[0] * rq[3] + rq[1] * rq[2] + rq[2] * rq[1] + rq[3] * rq[0]) / self.width,
-                    expand * 4.0 * (rq[0]**2 - rq[1]**2 + rq[2]**2 - rq[3]**2) / self.height,
-                    4.0 * (-rq[0] * rq[1] - rq[1] * rq[0] + rq[2] * rq[3] + rq[3] * rq[2])  / np.pi
-                ],
-                [
-                    expand * 4.0 * (-rq[0] * rq[2] + rq[1] * rq[3] - rq[2] * rq[0] + rq[3] * rq[1]) / self.width,
-                    expand * 4.0 * (rq[0] * rq[1] + rq[1] * rq[0] + rq[2] * rq[3] + rq[3] * rq[2]) / self.height,
-                    4.0 * (rq[0]**2 - rq[1]**2 - rq[2]**2 + rq[3]**2)  / np.pi
-                ]], dtype=np.float64)
 
+            R = self.get_rotation_matrix(0.0, 45.0, 360.0 * zone_id / self.zones)
+            m = R * v # Rotation matrix scaled by view parameters
             # Build remapping table using vectorized operations
             offset_width = offset * self.width
             offset_height = offset * self.height
@@ -124,6 +126,7 @@ class PythonDewarper:
             y_coords = j_coords.flatten() - offset_height
 
             coords = np.column_stack([x_coords, y_coords, np.ones_like(x_coords)])
+
             xyz = coords @ m.T
             hs = np.hypot(xyz[:, 0], xyz[:, 1])
             phi = np.arctan2(hs, xyz[:, 2])
