@@ -70,24 +70,24 @@ def get_rotation_matrix(yaw: float, pitch: float, roll: float) -> np.ndarray:
         [ 2.0 * (w*z + x*y), (w*w - x*x + y*y - z*z), 2.0 * (y*z - w*x)],
         [ 2.0 * (x*z - y*w), 2.0 * (w*x + y*z), (w*w - x*x - y*y + z*z)]], dtype=np.float64)
 
-def project_pixel(R: np.ndarray, i: int, j: int, width: int, height: int) -> Tuple[float, float, float]:
-
+def project_pixel(R: np.ndarray, i: int, j: int, width: int, height: int) -> Tuple[int, int]:
     # These parameters control the focal length and centering of the projection
-    expand = 1.269 # Experimental expansion factor to cover full frame (match ffmpeg output)
-    offset = 0.25 # Experimental offset to center the projection (matching ffmpeg)
-    v = np.array([expand * 4.0 / width, expand * 4.0 / height, 4.0 / np.pi], dtype=np.float64)
+    v = np.array([5.0 / width, 5.0 / height, 4.0 / np.pi], dtype=np.float64)
+    y = j - width / 4.0
+    x = i - height / 4.0
+
     m = R * v  # Rotation matrix scaled by view parameters
 
     # Build remapping table
-    offset_width = offset * width
-    offset_height = offset * height
-
-    y = j - offset_height
-    x = i - offset_width               
     xyz = ((m[0, 0] * x + m[0, 1] * y + m[0, 2]),
         (m[1, 0] * x + m[1, 1] * y + m[1, 2]),
         (m[2, 0] * x + m[2, 1] * y + m[2, 2]))
-    return xyz
+
+    hs = np.hypot(xyz[0], xyz[1])
+    phi = np.arctan2(hs, xyz[2])
+    src_x = int(width * (xyz[0] * phi / (np.pi * hs) + 0.5))
+    src_y = int(height * (xyz[1] * phi / (np.pi * hs) + 0.5))
+    return src_x, src_y
 
 
 class PythonDewarper:
@@ -131,12 +131,7 @@ class PythonDewarper:
             for j in range(self.output_height):
                 line = []
                 for i in range(self.output_width):
-                    xyz = project_pixel(R, i, j, self.width, self.height)
-                    
-                    hs = np.hypot(xyz[0], xyz[1])
-                    phi = np.arctan2(hs, xyz[2])
-                    src_x = int(self.width * (xyz[0] * phi / (np.pi * hs) + 0.5))
-                    src_y = int(self.height * (xyz[1] * phi / (np.pi * hs) + 0.5))
+                    src_x, src_y = project_pixel(R, i, j, self.width, self.height)                    
                     line.append((src_y, src_x))
                 remap_zone.append(line)
             remap.append(remap_zone)
