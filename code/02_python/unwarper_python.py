@@ -70,23 +70,13 @@ def get_rotation_matrix(yaw: float, pitch: float, roll: float) -> np.ndarray:
         [ 2.0 * (w*z + x*y), (w*w - x*x + y*y - z*z), 2.0 * (y*z - w*x)],
         [ 2.0 * (x*z - y*w), 2.0 * (w*x + y*z), (w*w - x*x - y*y + z*z)]], dtype=np.float64)
 
-def project_pixel(R: np.ndarray, i: int, j: int, width: int, height: int) -> Tuple[int, int]:
-    # These parameters control the focal length and centering of the projection
-    v = np.array([5.0 / width, 5.0 / height, 4.0 / np.pi], dtype=np.float64)
-    y = j - width / 4.0
-    x = i - height / 4.0
 
-    m = R * v  # Rotation matrix scaled by view parameters
-
-    # Build remapping table
-    xyz = ((m[0, 0] * x + m[0, 1] * y + m[0, 2]),
-        (m[1, 0] * x + m[1, 1] * y + m[1, 2]),
-        (m[2, 0] * x + m[2, 1] * y + m[2, 2]))
-
-    hs = np.hypot(xyz[0], xyz[1])
+def project_pixel(xyz: np.ndarray, width: int, height: int) -> Tuple[int, int]:
+    hs = np.hypot(xyz[0],xyz[1])
     phi = np.arctan2(hs, xyz[2])
-    src_x = int(width * (xyz[0] * phi / (np.pi * hs) + 0.5))
-    src_y = int(height * (xyz[1] * phi / (np.pi * hs) + 0.5))
+    coeff = phi / (hs * np.pi)
+    src_x = xyz[0] * coeff + 0.5
+    src_y = xyz[1] * coeff + 0.5
     return src_x, src_y
 
 
@@ -131,8 +121,15 @@ class PythonDewarper:
             for j in range(self.output_height):
                 line = []
                 for i in range(self.output_width):
-                    src_x, src_y = project_pixel(R, i, j, self.width, self.height)                    
-                    line.append((src_y, src_x))
+                    v = np.array([i / (0.5 * self.output_width) - 1.0, j / (0.5 * self.output_height) - 1.0, 1.0])
+                    xyz = R @ v.T
+                    src_x, src_y = project_pixel(xyz, self.width, self.height)
+                    map_y = int(src_y * self.height)
+                    map_x = int(src_x * self.width)
+                    if 0 <= map_y < self.height and 0 <= map_x < self.width:    
+                        line.append((map_y, map_x))
+                    else:
+                        line.append((0, 0))
                 remap_zone.append(line)
             remap.append(remap_zone)
 
@@ -151,10 +148,8 @@ class PythonDewarper:
 
         for i in range(self.output_height):
             for j in range(self.output_width):
-                try:
-                    output_buffer[i, j] = image[remap_table[i][j]]
-                except IndexError:
-                    output_buffer[i, j] = [0, 0, 0]  # Black for out-of-bounds
+                # Note: never out of bound as it is ensured when building remapping
+                output_buffer[i, j] = image[remap_table[i][j]]
 
         return output_buffer.reshape((self.output_height, self.output_width, 3))
 
