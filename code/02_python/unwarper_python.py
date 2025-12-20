@@ -71,7 +71,7 @@ def get_rotation_matrix(yaw: float, pitch: float, roll: float) -> np.ndarray:
         [ 2.0 * (x*z - y*w), 2.0 * (w*x + y*z), (w*w - x*x - y*y + z*z)]], dtype=np.float64)
 
 
-def project_pixel(xyz: np.ndarray, width: int, height: int) -> Tuple[int, int]:
+def project2D(xyz: np.ndarray) -> Tuple[int, int]:
     hs = np.hypot(xyz[0],xyz[1])
     phi = np.arctan2(hs, xyz[2])
     coeff = phi / (hs * np.pi)
@@ -123,7 +123,7 @@ class PythonDewarper:
                 for i in range(self.output_width):
                     v = np.array([i / (0.5 * self.output_width) - 1.0, j / (0.5 * self.output_height) - 1.0, 1.0])
                     xyz = R @ v.T
-                    src_x, src_y = project_pixel(xyz, self.width, self.height)
+                    src_x, src_y = project2D(xyz)
                     map_y = int(src_y * self.height)
                     map_x = int(src_x * self.width)
                     if 0 <= map_y < self.height and 0 <= map_x < self.width:    

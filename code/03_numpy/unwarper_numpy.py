@@ -29,8 +29,8 @@ def multiply_quaternion(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     Returns:
         Result quaternion [w, x, y, z]
     """
-    w1, x1, y1, z1 = a[0], a[1], a[2], a[3]
-    w2, x2, y2, z2 = b[0], b[1], b[2], b[3]
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b
     
     w = w1*w2 - x1*x2 - y1*y2 - z1*z2
     x = w1*x2 + x1*w2 + y1*z2 - z1*y2
@@ -38,6 +38,46 @@ def multiply_quaternion(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     z = w1*z2 + x1*y2 - y1*x2 + z1*w2
     
     return np.array([w, x, y, z], dtype=np.float64)
+
+def get_rotation_matrix(yaw: float, pitch: float, roll: float) -> np.ndarray:
+    """
+    Generate rotation matrix from yaw, pitch, roll angles (in degrees).
+    
+    Args:
+        yaw: Rotation around Y axis in degrees
+        pitch: Rotation around X axis in degrees
+        roll: Rotation around Z axis in degrees
+    Returns:
+        3x3 rotation matrix as numpy array
+    """
+    # Yaw quaternion, rotate view around Y axis
+    yaw = np.deg2rad(0)
+    yaw_q = np.array([np.cos(yaw/2.0), 0.0, np.sin(yaw/2.0), 0.0], dtype=np.float64)
+    # Pitch quaternion, rotate view around X axis (look up 45 degrees)
+    pitch = np.deg2rad(45)             
+    pitch_q = np.array([np.cos(pitch/2.0), np.sin(pitch/2.0), 0.0, 0.0], dtype=np.float64)
+    # Roll quaternion, rotate view around Z axis (look in different direction)
+    roll = np.deg2rad(roll)
+    roll_q = np.array([np.cos(roll/2.0), 0.0, 0.0, np.sin(roll/2.0)], dtype=np.float64)
+
+    rq = multiply_quaternion(roll_q, multiply_quaternion(pitch_q, yaw_q))
+
+    # Build spherical projection matrix from quaternions
+    w, x, y, z = rq
+    return np.array([
+        [ (w*w + x*x - y*y - z*z),  2.0 * (x*y - z*w), 2.0 * (w*y + x*z)],
+        [ 2.0 * (w*z + x*y), (w*w - x*x + y*y - z*z), 2.0 * (y*z - w*x)],
+        [ 2.0 * (x*z - y*w), 2.0 * (w*x + y*z), (w*w - x*x - y*y + z*z)]], dtype=np.float64)
+
+
+def project_pixel(xyz: np.ndarray) -> Tuple[int, int]:
+    """Project pixel from fisheye (unit) dome flat fisheye view"""
+    hs = np.hypot(xyz[0],xyz[1])
+    phi = np.arctan2(hs, xyz[2])
+    coeff = phi / (hs * np.pi)
+    src_x = xyz[0] * coeff + 0.5
+    src_y = xyz[1] * coeff + 0.5
+    return src_x, src_y
 
 
 class PythonDewarper:
@@ -64,36 +104,6 @@ class PythonDewarper:
         self.output_buffer = np.zeros((self.zones, self.output_height, self.output_width, 3), dtype=np.uint8)
 
     
-    def get_rotation_matrix(self, yaw: float, pitch: float, roll: float) -> np.ndarray:
-        """
-        Generate rotation matrix from yaw, pitch, roll angles (in degrees).
-        
-        Args:
-            yaw: Rotation around Y axis in degrees
-            pitch: Rotation around X axis in degrees
-            roll: Rotation around Z axis in degrees
-        Returns:
-            3x3 rotation matrix as numpy array
-        """
-        # Yaw quaternion, rotate view around Y axis
-        yaw = np.deg2rad(0)
-        yaw_q = np.array([np.cos(yaw/2.0), 0.0, np.sin(yaw/2.0), 0.0], dtype=np.float64)
-        # Pitch quaternion, rotate view around X axis (look up 45 degrees)
-        pitch = np.deg2rad(45)             
-        pitch_q = np.array([np.cos(pitch/2.0), np.sin(pitch/2.0), 0.0, 0.0], dtype=np.float64)
-        # Roll quaternion, rotate view around Z axis (look in different direction)
-        roll = np.deg2rad(roll)
-        roll_q = np.array([np.cos(roll/2.0), 0.0, 0.0, np.sin(roll/2.0)], dtype=np.float64)
-
-        rq = multiply_quaternion(roll_q, multiply_quaternion(pitch_q, yaw_q))
-
-        # Build spherical projection matrix from quaternions
-        w, x, y, z = rq
-        return np.array([
-            [ (w*w + x*x - y*y - z*z),  2.0 * (x*y - z*w), 2.0 * (w*y + x*z)],
-            [ 2.0 * (w*z + x*y), (w*w - x*x + y*y - z*z), 2.0 * (y*z - w*x)],
-            [ 2.0 * (x*z - y*w), 2.0 * (w*x + y*z), (w*w - x*x - y*y + z*z)]], dtype=np.float64)
-
     def _dewarp_mapping(self):
         """
         Create pixel remapping tables for all zones.
@@ -108,32 +118,34 @@ class PythonDewarper:
         # Last dimension contains (src_x, src_y) for each pixel
         remap_list = []
         # These parameters control the focal length and centering of the projection
-        expand = 1.269 # Experimental expansion factor to cover full frame (match ffmpeg output)
-        offset = 0.25 # Experimental offset to center the projection (matching ffmpeg)
-        v = np.array([expand * 4.0 / self.width, expand * 4.0 / self.height, 4.0 / np.pi], dtype=np.float64)  # Up vector
         for zone_id in range(self.zones):
 
-            R = self.get_rotation_matrix(0.0, 45.0, 360.0 * zone_id / self.zones)
-            m = R * v # Rotation matrix scaled by view parameters
-            # Build remapping table using vectorized operations
-            offset_width = offset * self.width
-            offset_height = offset * self.height
+            R = get_rotation_matrix(0.0, 45.0, 360.0 * zone_id / self.zones)
 
-            j_coords, i_coords = np.meshgrid(
+            # Replace loops on i, j, create arrays of coordinates
+            i_coords, j_coords = np.meshgrid(
                 np.arange(self.output_width),
-                np.arange(self.output_height), indexing='ij')
-            x_coords = i_coords.flatten() - offset_width
-            y_coords = j_coords.flatten() - offset_height
+                np.arange(self.output_height),
+                indexing='xy')
 
-            coords = np.column_stack([x_coords, y_coords, np.ones_like(x_coords)])
+            # Vectorized globally fix coordinates from i,j to x,y
+            inv_width = 2.0 / self.output_width
+            inv_height = 2.0 / self.output_height
+            x_coords = i_coords.flatten() * inv_width  - 1.0
+            y_coords = j_coords.flatten() * inv_height - 1.0
 
-            xyz = coords @ m.T
-            hs = np.hypot(xyz[:, 0], xyz[:, 1])
-            phi = np.arctan2(hs, xyz[:, 2])
+            coords = np.column_stack([x_coords, y_coords, np.ones_like(x_coords)]).T
 
+            # Apply rotation matrix to all coordinates vectors
+            xyz = R @ coords
+
+            # Map 3D point to 2D fisheye point
             # Vectorized source coordinate calculation, integer coordinates
-            src_x = (self.width * (xyz[:, 0] * phi / (np.pi * hs) + 0.5)).astype(np.int32)
-            src_y = (self.height * (xyz[:, 1] * phi / (np.pi * hs) + 0.5)).astype(np.int32)
+            hs = np.hypot(xyz[0, :],xyz[1, :])
+            phi = np.arctan2(hs, xyz[2, :])
+            coeff = phi / (hs * np.pi)
+            src_x = (self.width * (xyz[0, :] * coeff + 0.5)).astype(np.int32)
+            src_y = (self.height * (xyz[1, :] * coeff + 0.5)).astype(np.int32)
 
             # Clip to valid range
             src_x_int = np.clip(src_x, 0, self.width - 1)
