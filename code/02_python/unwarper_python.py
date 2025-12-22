@@ -121,7 +121,7 @@ class PythonDewarper:
             for j in range(self.output_height):
                 line = []
                 for i in range(self.output_width):
-                    v = np.array([i / (0.5 * self.output_width) - 1.0, j / (0.5 * self.output_height) - 1.0, 1.0])
+                    v = np.array([i / (0.25 * self.width) - 1.0, j / (0.25 * self.height) - 1.0, 1.0])
                     xyz = R @ v.T
                     src_x, src_y = project2D(xyz)
                     map_y = int(src_y * self.height)

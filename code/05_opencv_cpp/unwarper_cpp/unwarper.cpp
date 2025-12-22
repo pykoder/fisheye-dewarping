@@ -155,7 +155,7 @@ public:
         cv::remap(image, output,
                  remap_tables[zone_id * 2],
                  remap_tables[zone_id * 2 + 1],
-                 cv::INTER_LINEAR,
+                 cv::INTER_NEAREST,
                  cv::BORDER_CONSTANT,
                  cv::Scalar(0, 0, 0));
         
